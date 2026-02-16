@@ -1,0 +1,21 @@
+# Environment files
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# Editor directories
+.vscode/
+.idea/
+
+# Node modules (if any)
+node_modules/
+
+# Chrome extension packaging
+*.crx
+*.pem
+*.zip
+
+# Logs
+*.log

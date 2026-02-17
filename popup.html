@@ -41,12 +41,11 @@
     .settings-btn {
       background: none;
       border: none;
-      font-size: 24px;
       cursor: pointer;
       padding: 8px;
-      color: #666;
+      color: #64748b;
       border-radius: 6px;
-      transition: background 0.2s;
+      transition: all 0.2s;
       width: 40px;
       height: 40px;
       display: flex;
@@ -55,8 +54,15 @@
       flex-shrink: 0;
     }
     
+    .settings-btn svg {
+      width: 20px;
+      height: 20px;
+      stroke-width: 2;
+    }
+    
     .settings-btn:hover {
-      background: #e0e0e0;
+      background: #f1f5f9;
+      color: #334155;
     }
     
     .section {
@@ -261,9 +267,16 @@
     
     .selected-page-link {
       color: #64748b;
-      font-size: 14px;
       opacity: 0.7;
       transition: opacity 0.2s;
+      display: flex;
+      align-items: center;
+    }
+    
+    .selected-page-link svg {
+      width: 16px;
+      height: 16px;
+      stroke-width: 2;
     }
     
     .selected-page:hover .selected-page-link {
@@ -347,7 +360,12 @@
       <h1>Claude → Notion</h1>
       <p class="subtitle">Export conversations</p>
     </div>
-    <button class="settings-btn" id="settingsBtn" title="Settings">⚙️</button>
+    <button class="settings-btn" id="settingsBtn" title="Settings">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+    </button>
   </div>
 
   <div class="section">

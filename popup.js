@@ -28,7 +28,7 @@ let exportHistory = null;
 // Load credentials and check if export is in progress
 chrome.storage.local.get(['anthropicApiKey', 'notionToken', 'selectedPageId', 'selectedPageTitle', 'selectedPageUrl', 'exportProgress'], async (result) => {
   if (!result.anthropicApiKey || !result.notionToken) {
-    showStatus('warning', '⚙️ Please configure your API keys in settings first');
+    showStatus('warning', 'Please configure your API keys in settings first');
     exportBtn.disabled = true;
   } else {
     notionToken = result.notionToken;
@@ -281,18 +281,18 @@ function updateExportStatusUI() {
     // Up to date
     exportStatusContent.innerHTML = `
       <div class=\"export-status-info\">
-        <span class=\"status-badge success\">✓ Up to date</span>
+        <span class="status-badge success">Up to date</span>
       </div>
-      <div class=\"export-status-info\">
+      <div class="export-status-info">
         Last exported: <strong>${timeAgo}</strong>
       </div>
-      <div class=\"export-status-info\">
+      <div class="export-status-info">
         ${exportHistory.turnCount} turn${exportHistory.turnCount > 1 ? 's' : ''}
       </div>
     `;
     
     exportButtonsDiv.innerHTML = `
-      <button id=\"exportBtn\" disabled>✓ Up to date</button>
+      <button id="exportBtn" disabled>Up to date</button>
       <button id=\"reexportBtn\" class=\"secondary\" style=\"margin-top: 8px;\">Re-export from Scratch</button>
     `;
     
@@ -315,8 +315,18 @@ function getTimeAgo(isoString) {
 
 function showSelectedPage(title) {
   selectedPageDiv.innerHTML = `
-    <span class="selected-page-text">✓ ${title}</span>
-    <span class="selected-page-link" title="Open in Notion">🔗</span>
+    <span class="selected-page-text">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 14px; height: 14px; stroke-width: 2; display: inline-block; vertical-align: text-top; margin-right: 6px;">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+      ${title}
+    </span>
+    <span class="selected-page-link" title="Open in Notion">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+      </svg>
+    </span>
   `;
   selectedPageDiv.classList.add('show');
   

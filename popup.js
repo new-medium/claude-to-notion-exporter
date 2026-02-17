@@ -18,6 +18,7 @@ const progressText = document.getElementById('progressText');
 
 let selectedPageId = null;
 let selectedPageTitle = null;
+let selectedPageUrl = null;
 let notionToken = null;
 let searchTimeout = null;
 let currentConversationUrl = null;
@@ -25,7 +26,7 @@ let currentTurnCount = 0;
 let exportHistory = null;
 
 // Load credentials and check if export is in progress
-chrome.storage.local.get(['anthropicApiKey', 'notionToken', 'selectedPageId', 'selectedPageTitle', 'exportProgress'], async (result) => {
+chrome.storage.local.get(['anthropicApiKey', 'notionToken', 'selectedPageId', 'selectedPageTitle', 'selectedPageUrl', 'exportProgress'], async (result) => {
   if (!result.anthropicApiKey || !result.notionToken) {
     showStatus('warning', '⚙️ Please configure your API keys in settings first');
     exportBtn.disabled = true;
@@ -36,6 +37,7 @@ chrome.storage.local.get(['anthropicApiKey', 'notionToken', 'selectedPageId', 's
     if (result.selectedPageId && result.selectedPageTitle) {
       selectedPageId = result.selectedPageId;
       selectedPageTitle = result.selectedPageTitle;
+      selectedPageUrl = result.selectedPageUrl || `https://www.notion.so/${result.selectedPageId.replace(/-/g, '')}`;
       showSelectedPage(selectedPageTitle);
       exportBtn.disabled = false;
     }
@@ -183,8 +185,13 @@ function selectPage(pageId, pageTitle) {
   selectedPageId = pageId;
   selectedPageTitle = pageTitle;
   
+  // Construct Notion URL from page ID
+  // Remove hyphens if present and format as Notion URL
+  const cleanId = pageId.replace(/-/g, '');
+  selectedPageUrl = `https://www.notion.so/${cleanId}`;
+  
   // Save selection
-  chrome.storage.local.set({ selectedPageId, selectedPageTitle });
+  chrome.storage.local.set({ selectedPageId, selectedPageTitle, selectedPageUrl });
   
   // Update UI
   showSelectedPage(pageTitle);
@@ -307,13 +314,18 @@ function getTimeAgo(isoString) {
 }
 
 function showSelectedPage(title) {
-  selectedPageDiv.textContent = `✓ ${title}`;
+  selectedPageDiv.innerHTML = `
+    <span class="selected-page-text">✓ ${title}</span>
+    <span class="selected-page-link" title="Open in Notion">🔗</span>
+  `;
   selectedPageDiv.classList.add('show');
-}
-
-function showSelectedPage(title) {
-  selectedPageDiv.textContent = `✓ ${title}`;
-  selectedPageDiv.classList.add('show');
+  
+  // Add click handler to open the page
+  selectedPageDiv.onclick = () => {
+    if (selectedPageUrl) {
+      chrome.tabs.create({ url: selectedPageUrl });
+    }
+  };
 }
 
 // Export/Update handler

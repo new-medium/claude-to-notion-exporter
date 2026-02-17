@@ -73,6 +73,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+  
+  if (request.action === 'getExportHistory') {
+    getExportHistory(request.conversationUrl)
+      .then(history => {
+        sendResponse({ success: true, data: history });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
 });
 
 async function handleSummarization(turnData, apiKey) {
@@ -202,25 +213,40 @@ ${fullTurn}`;
 }
 
 async function handleFullExport(exportData) {
-  const { turns, chatTitle, conversationUrl, apiKey, notionToken, pageId } = exportData;
+  const { turns, chatTitle, conversationUrl, apiKey, notionToken, pageId, exportMode, existingExportData } = exportData;
   const NOTION_BLOCK_LIMIT = 2000;
   
   try {
+    // Determine which turns to process
+    let turnsToProcess = turns;
+    let startIndex = 0;
+    
+    if (exportMode === 'update' && existingExportData) {
+      // Only process new turns
+      startIndex = existingExportData.turnCount;
+      turnsToProcess = turns.slice(startIndex);
+      console.log(`Update mode: Processing ${turnsToProcess.length} new turns (${startIndex + 1} to ${turns.length})`);
+      
+      if (turnsToProcess.length === 0) {
+        throw new Error('No new turns to export');
+      }
+    }
+    
     // Update progress
-    await updateProgress('starting', 0, turns.length, 'Starting export...');
+    await updateProgress('starting', 0, turnsToProcess.length, 'Starting export...');
     
     // Process each turn
     const summaries = [];
-    for (let i = 0; i < turns.length; i++) {
-      const turn = turns[i];
+    for (let i = 0; i < turnsToProcess.length; i++) {
+      const turn = turnsToProcess[i];
       
-      await updateProgress('summarizing', i, turns.length, `Processing turn ${i + 1} of ${turns.length}...`);
+      await updateProgress('summarizing', i, turnsToProcess.length, `Processing turn ${startIndex + i + 1} of ${turns.length}...`);
       
       try {
         const summary = await handleSummarization(turn, apiKey);
         summaries.push(summary);
       } catch (error) {
-        console.error(`Error summarizing turn ${i + 1}:`, error);
+        console.error(`Error summarizing turn ${startIndex + i + 1}:`, error);
         summaries.push({
           turnNumber: turn.turnNumber,
           oneLine: `Turn ${turn.turnNumber} (summary failed)`,
@@ -231,23 +257,47 @@ async function handleFullExport(exportData) {
       }
       
       // Delay between turns to avoid rate limiting (increased from 300ms)
-      if (i < turns.length - 1) {
+      if (i < turnsToProcess.length - 1) {
         await sleep(800);
       }
     }
     
-    await updateProgress('creating', turns.length, turns.length, 'Creating Notion blocks...');
+    await updateProgress('creating', turnsToProcess.length, turnsToProcess.length, 'Creating Notion blocks...');
     
-    // Create blocks in Notion
-    await createNotionToggles(summaries, pageId, notionToken, chatTitle, conversationUrl, NOTION_BLOCK_LIMIT);
+    let parentBlockId;
+    
+    // Create or append blocks in Notion
+    if (exportMode === 'update' && existingExportData) {
+      // Append to existing block
+      await appendNotionToggles(summaries, existingExportData.parentBlockId, notionToken, NOTION_BLOCK_LIMIT);
+      parentBlockId = existingExportData.parentBlockId;
+    } else {
+      // Create new master toggle
+      parentBlockId = await createNotionToggles(summaries, pageId, notionToken, chatTitle, conversationUrl, NOTION_BLOCK_LIMIT);
+    }
+    
+    // Store/update export history
+    await storeExportHistory(conversationUrl, {
+      conversationUrl,
+      conversationTitle: chatTitle,
+      exportedAt: new Date().toISOString(),
+      turnCount: turns.length,
+      notionPageId: pageId,
+      parentBlockId: parentBlockId
+    });
     
     // Clear progress and show success notification
     await chrome.storage.local.remove(['exportProgress']);
+    
+    const message = exportMode === 'update' 
+      ? `Successfully added ${turnsToProcess.length} new turns to Notion!`
+      : `Successfully exported ${turns.length} turns to Notion!`;
+    
     chrome.notifications.create({
       type: 'basic',
       iconUrl: 'icon48.png',
-      title: 'Export Complete',
-      message: `Successfully exported ${turns.length} turns to Notion!`
+      title: exportMode === 'update' ? 'Update Complete' : 'Export Complete',
+      message: message
     });
     
   } catch (error) {
@@ -266,6 +316,28 @@ async function handleFullExport(exportData) {
 async function updateProgress(status, current, total, message) {
   await chrome.storage.local.set({
     exportProgress: { status, current, total, message }
+  });
+}
+
+async function storeExportHistory(conversationUrl, exportData) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['exportHistory'], (result) => {
+      const history = result.exportHistory || {};
+      history[conversationUrl] = exportData;
+      chrome.storage.local.set({ exportHistory: history }, () => {
+        console.log('Stored export history for:', conversationUrl);
+        resolve();
+      });
+    });
+  });
+}
+
+async function getExportHistory(conversationUrl) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['exportHistory'], (result) => {
+      const history = result.exportHistory || {};
+      resolve(history[conversationUrl] || null);
+    });
   });
 }
 
@@ -366,6 +438,8 @@ async function createNotionToggles(summaries, pageId, notionToken, chatTitle, co
   // Step 2: Find all "Source Text" toggle blocks and populate them
   const masterBlockId = result1.results[0].id;
   
+  console.log('Created master block with ID:', masterBlockId);
+  
   // Get children of master toggle
   const response2 = await fetch(`https://api.notion.com/v1/blocks/${masterBlockId}/children`, {
     method: 'GET',
@@ -400,6 +474,157 @@ async function createNotionToggles(summaries, pageId, notionToken, chatTitle, co
     if (!response3.ok) continue;
     
     const turnChildren = await response3.json();
+    // The "Source Text" toggle should be the second child (index 1)
+    const sourceTextToggle = turnChildren.results[1];
+    
+    if (sourceTextToggle && sourceTextToggle.type === 'toggle') {
+      // Chunk source text if needed
+      const userChunks = chunkText(summary.sourceUser, NOTION_BLOCK_LIMIT);
+      const assistantChunks = chunkText(summary.sourceAssistant, NOTION_BLOCK_LIMIT);
+      
+      // Build source text children
+      const sourceTextChildren = [
+        {
+          object: 'block',
+          type: 'paragraph',
+          paragraph: {
+            rich_text: [{
+              type: 'text',
+              text: { content: 'User:' },
+              annotations: { bold: true }
+            }]
+          }
+        },
+        ...userChunks.map(chunk => ({
+          object: 'block',
+          type: 'paragraph',
+          paragraph: {
+            rich_text: [{
+              type: 'text',
+              text: { content: chunk }
+            }]
+          }
+        })),
+        {
+          object: 'block',
+          type: 'paragraph',
+          paragraph: {
+            rich_text: [{
+              type: 'text',
+              text: { content: 'Assistant:' },
+              annotations: { bold: true }
+            }]
+          }
+        },
+        ...assistantChunks.map(chunk => ({
+          object: 'block',
+          type: 'paragraph',
+          paragraph: {
+            rich_text: [{
+              type: 'text',
+              text: { content: chunk }
+            }]
+          }
+        }))
+      ];
+      
+      // Add children to the source text toggle
+      await fetch(`https://api.notion.com/v1/blocks/${sourceTextToggle.id}/children`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${notionToken}`,
+          'Content-Type': 'application/json',
+          'Notion-Version': '2022-06-28'
+        },
+        body: JSON.stringify({
+          children: sourceTextChildren
+        })
+      });
+      
+      // Small delay to avoid rate limiting
+      await sleep(200);
+    }
+  }
+  
+  // Return the master block ID for future updates
+  return masterBlockId;
+}
+
+async function appendNotionToggles(summaries, parentBlockId, notionToken, NOTION_BLOCK_LIMIT) {
+  // Create toggle blocks for new turns (only 2 levels of nesting in initial creation)
+  const toggleBlocks = summaries.map(summary => {
+    return {
+      object: 'block',
+      type: 'toggle',
+      toggle: {
+        rich_text: [{
+          type: 'text',
+          text: { content: summary.oneLine }
+        }],
+        children: [
+          {
+            object: 'block',
+            type: 'paragraph',
+            paragraph: {
+              rich_text: [{
+                type: 'text',
+                text: { content: summary.paragraph }
+              }]
+            }
+          },
+          {
+            object: 'block',
+            type: 'toggle',
+            toggle: {
+              rich_text: [{
+                type: 'text',
+                text: { content: 'Source Text' }
+              }]
+              // Children will be added in a second pass
+            }
+          }
+        ]
+      }
+    };
+  });
+  
+  // Step 1: Append new turn toggles to the parent block
+  const response1 = await fetch(`https://api.notion.com/v1/blocks/${parentBlockId}/children`, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${notionToken}`,
+      'Content-Type': 'application/json',
+      'Notion-Version': '2022-06-28'
+    },
+    body: JSON.stringify({
+      children: toggleBlocks
+    })
+  });
+  
+  if (!response1.ok) {
+    const errorData = await response1.json().catch(() => ({}));
+    throw new Error(`Notion API Error: ${errorData.message || response1.statusText}`);
+  }
+  
+  const result1 = await response1.json();
+  
+  // Step 2: Populate "Source Text" toggles
+  for (let i = 0; i < result1.results.length; i++) {
+    const turnBlock = result1.results[i];
+    const summary = summaries[i];
+    
+    // Get children of this turn toggle
+    const response2 = await fetch(`https://api.notion.com/v1/blocks/${turnBlock.id}/children`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${notionToken}`,
+        'Notion-Version': '2022-06-28'
+      }
+    });
+    
+    if (!response2.ok) continue;
+    
+    const turnChildren = await response2.json();
     // The "Source Text" toggle should be the second child (index 1)
     const sourceTextToggle = turnChildren.results[1];
     

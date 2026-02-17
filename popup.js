@@ -8,6 +8,9 @@ const pageSearchInput = document.getElementById('pageSearch');
 const searchResults = document.getElementById('searchResults');
 const selectedPageDiv = document.getElementById('selectedPage');
 const exportBtn = document.getElementById('exportBtn');
+const exportButtonsDiv = document.getElementById('exportButtons');
+const exportStatusDiv = document.getElementById('exportStatus');
+const exportStatusContent = document.getElementById('exportStatusContent');
 const statusDiv = document.getElementById('status');
 const progressDiv = document.getElementById('progress');
 const progressFill = document.getElementById('progressFill');
@@ -17,6 +20,9 @@ let selectedPageId = null;
 let selectedPageTitle = null;
 let notionToken = null;
 let searchTimeout = null;
+let currentConversationUrl = null;
+let currentTurnCount = 0;
+let exportHistory = null;
 
 // Load credentials and check if export is in progress
 chrome.storage.local.get(['anthropicApiKey', 'notionToken', 'selectedPageId', 'selectedPageTitle', 'exportProgress'], async (result) => {
@@ -40,6 +46,9 @@ chrome.storage.local.get(['anthropicApiKey', 'notionToken', 'selectedPageId', 's
     showExportInProgress(result.exportProgress);
     startProgressPolling();
   }
+  
+  // Check current conversation and export history
+  await checkConversationStatus();
 });
 
 // Settings button
@@ -182,6 +191,119 @@ function selectPage(pageId, pageTitle) {
   searchResults.classList.remove('show');
   pageSearchInput.value = '';
   exportBtn.disabled = false;
+  
+  // Recheck export status with new page selected
+  checkConversationStatus();
+}
+
+async function checkConversationStatus() {
+  try {
+    // Get current tab
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    
+    if (!tab || !tab.url || !tab.url.includes('claude.ai')) {
+      return; // Not on Claude page
+    }
+    
+    currentConversationUrl = tab.url;
+    
+    // Extract conversation to get turn count
+    const response = await chrome.tabs.sendMessage(tab.id, { 
+      action: 'extractConversation' 
+    });
+    
+    if (response && response.success) {
+      currentTurnCount = response.data.length;
+      
+      // Get export history for this conversation
+      chrome.runtime.sendMessage({
+        action: 'getExportHistory',
+        conversationUrl: currentConversationUrl
+      }, (historyResponse) => {
+        if (historyResponse && historyResponse.success && historyResponse.data) {
+          exportHistory = historyResponse.data;
+          updateExportStatusUI();
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error checking conversation status:', error);
+  }
+}
+
+function updateExportStatusUI() {
+  if (!exportHistory) {
+    exportStatusDiv.classList.remove('show');
+    // Show default export button
+    exportButtonsDiv.innerHTML = '<button id=\"exportBtn\" ' + (selectedPageId ? '' : 'disabled') + '>Export Conversation</button>';
+    return;
+  }
+  
+  const newTurns = currentTurnCount - exportHistory.turnCount;
+  const timeAgo = getTimeAgo(exportHistory.exportedAt);
+  
+  // Show export status
+  exportStatusDiv.classList.add('show');
+  
+  if (newTurns > 0) {
+    // Has new turns - show update option
+    exportStatusContent.innerHTML = `
+      <div class=\"export-status-info\">
+        <span class=\"status-badge update\">+${newTurns} new turn${newTurns > 1 ? 's' : ''}</span>
+      </div>
+      <div class=\"export-status-info\">
+        Last exported: <strong>${timeAgo}</strong>
+      </div>
+      <div class=\"export-status-info\">
+        Previous: ${exportHistory.turnCount} turn${exportHistory.turnCount > 1 ? 's' : ''} → Current: ${currentTurnCount} turn${currentTurnCount > 1 ? 's' : ''}
+      </div>
+    `;
+    
+    exportButtonsDiv.innerHTML = `
+      <div class=\"button-group\">
+        <button id=\"updateBtn\">Update (+${newTurns})</button>
+        <button id=\"reexportBtn\" class=\"secondary\">Re-export</button>
+      </div>
+    `;
+    
+    // Add event listeners
+    document.getElementById('updateBtn').addEventListener('click', () => handleExport('update'));
+    document.getElementById('reexportBtn').addEventListener('click', () => handleExport('full'));
+    
+  } else if (newTurns === 0) {
+    // Up to date
+    exportStatusContent.innerHTML = `
+      <div class=\"export-status-info\">
+        <span class=\"status-badge success\">✓ Up to date</span>
+      </div>
+      <div class=\"export-status-info\">
+        Last exported: <strong>${timeAgo}</strong>
+      </div>
+      <div class=\"export-status-info\">
+        ${exportHistory.turnCount} turn${exportHistory.turnCount > 1 ? 's' : ''}
+      </div>
+    `;
+    
+    exportButtonsDiv.innerHTML = `
+      <button id=\"exportBtn\" disabled>✓ Up to date</button>
+      <button id=\"reexportBtn\" class=\"secondary\" style=\"margin-top: 8px;\">Re-export from Scratch</button>
+    `;
+    
+    document.getElementById('reexportBtn').addEventListener('click', () => handleExport('full'));
+  }
+}
+
+function getTimeAgo(isoString) {
+  const date = new Date(isoString);
+  const now = new Date();
+  const seconds = Math.floor((now - date) / 1000);
+  
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} minute${Math.floor(seconds / 60) > 1 ? 's' : ''} ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hour${Math.floor(seconds / 3600) > 1 ? 's' : ''} ago`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)} day${Math.floor(seconds / 86400) > 1 ? 's' : ''} ago`;
+  
+  return date.toLocaleDateString();
 }
 
 function showSelectedPage(title) {
@@ -189,8 +311,13 @@ function showSelectedPage(title) {
   selectedPageDiv.classList.add('show');
 }
 
-// Export button
-exportBtn.addEventListener('click', async () => {
+function showSelectedPage(title) {
+  selectedPageDiv.textContent = `✓ ${title}`;
+  selectedPageDiv.classList.add('show');
+}
+
+// Export/Update handler
+async function handleExport(mode = 'full') {
   // Get credentials from storage
   const result = await chrome.storage.local.get(['anthropicApiKey', 'notionToken']);
   const apiKey = result.anthropicApiKey;
@@ -212,7 +339,10 @@ exportBtn.addEventListener('click', async () => {
   }
   
   try {
-    exportBtn.disabled = true;
+    // Disable all buttons
+    const allButtons = exportButtonsDiv.querySelectorAll('button');
+    allButtons.forEach(btn => btn.disabled = true);
+    
     showStatus('info', 'Extracting conversation...');
     
     // Get active tab
@@ -220,7 +350,7 @@ exportBtn.addEventListener('click', async () => {
     
     if (!tab.url.includes('claude.ai')) {
       showStatus('error', 'Please open this extension on a claude.ai conversation page');
-      exportBtn.disabled = false;
+      allButtons.forEach(btn => btn.disabled = false);
       return;
     }
     
@@ -241,7 +371,11 @@ exportBtn.addEventListener('click', async () => {
       throw new Error('No conversation turns found');
     }
     
-    showStatus('info', `Found ${turns.length} turns. Starting export in background...`);
+    const statusMessage = mode === 'update' 
+      ? `Found ${turns.length - exportHistory.turnCount} new turns. Starting update in background...`
+      : `Found ${turns.length} turns. Starting export in background...`;
+    
+    showStatus('info', statusMessage);
     
     // Send to background worker to process
     chrome.runtime.sendMessage({
@@ -252,20 +386,25 @@ exportBtn.addEventListener('click', async () => {
         conversationUrl,
         apiKey,
         notionToken: notionTokenValue,
-        pageId: selectedPageId
+        pageId: selectedPageId,
+        exportMode: mode,
+        existingExportData: mode === 'update' ? exportHistory : null
       }
     }, (response) => {
       if (chrome.runtime.lastError) {
         showStatus('error', chrome.runtime.lastError.message);
-        exportBtn.disabled = false;
+        allButtons.forEach(btn => btn.disabled = false);
       } else if (response && !response.success) {
         showStatus('error', response.error || 'Export failed');
-        exportBtn.disabled = false;
+        allButtons.forEach(btn => btn.disabled = false);
       }
     });
     
     // Start polling for progress
-    showStatus('info', 'Export running in background. You can close this popup or switch tabs.');
+    const progressMessage = mode === 'update' 
+      ? 'Update running in background. You can close this popup or switch tabs.'
+      : 'Export running in background. You can close this popup or switch tabs.';
+    showStatus('info', progressMessage);
     progressDiv.style.display = 'block';
     startProgressPolling();
     
@@ -273,7 +412,15 @@ exportBtn.addEventListener('click', async () => {
     console.error('Export error:', error);
     showStatus('error', `Error: ${error.message}`);
     progressDiv.style.display = 'none';
-    exportBtn.disabled = false;
+    const allButtons = exportButtonsDiv.querySelectorAll('button');
+    allButtons.forEach(btn => btn.disabled = false);
+  }
+}
+
+// Delegated event listener for export button (when it's the default one)
+exportButtonsDiv.addEventListener('click', (e) => {
+  if (e.target.id === 'exportBtn' && !e.target.disabled) {
+    handleExport('full');
   }
 });
 

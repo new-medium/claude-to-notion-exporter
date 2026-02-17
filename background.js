@@ -2,6 +2,40 @@
 
 console.log('Background service worker loaded');
 
+// Helper function for retrying with exponential backoff
+async function retryWithBackoff(fn, maxRetries = 3, initialDelay = 1000) {
+  let lastError;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      
+      // If rate limited (429) or server error (5xx), retry
+      const shouldRetry = error.message.includes('429') || 
+                          error.message.includes('rate limit') ||
+                          error.message.includes('5') && error.message.includes('Error');
+      
+      if (!shouldRetry || attempt === maxRetries - 1) {
+        throw error;
+      }
+      
+      // Exponential backoff: 1s, 2s, 4s
+      const delay = initialDelay * Math.pow(2, attempt);
+      console.log(`Retry attempt ${attempt + 1}/${maxRetries} after ${delay}ms...`);
+      await sleep(delay);
+    }
+  }
+  
+  throw lastError;
+}
+
+// Helper function for sleep
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('Background: Received message:', request.action);
   
@@ -62,22 +96,24 @@ Format your response as JSON:
 Conversation turn to summarize:
 ${fullTurn}`;
 
-  // Try multiple model names in order of preference
-  const modelsToTry = [
-    'claude-3-5-sonnet-20241022',
-    'claude-3-5-sonnet-20240620', 
-    'claude-3-opus-20240229',
-    'claude-3-sonnet-20240229',
-    'claude-3-haiku-20240307'
-  ];
-  
-  let lastError = null;
-  
-  for (const model of modelsToTry) {
-    try {
-      console.log(`Trying model: ${model}`);
-      
-      const requestBody = {
+  // Wrap the API call in retry logic
+  return await retryWithBackoff(async () => {
+    // Try multiple model names in order of preference
+    const modelsToTry = [
+      'claude-3-5-sonnet-20241022',
+      'claude-3-5-sonnet-20240620', 
+      'claude-3-opus-20240229',
+      'claude-3-sonnet-20240229',
+      'claude-3-haiku-20240307'
+    ];
+    
+    let lastError = null;
+    
+    for (const model of modelsToTry) {
+      try {
+        console.log(`Trying model: ${model}`);
+        
+        const requestBody = {
         model: model,
         max_tokens: 1024,
         messages: [{
@@ -107,6 +143,11 @@ ${fullTurn}`;
         if (response.status === 404) {
           lastError = new Error(`Model not found: ${model}`);
           continue;
+        }
+        
+        // If rate limited, throw to trigger retry
+        if (response.status === 429) {
+          throw new Error(`Rate limit (429): ${errorData.error?.message || 'Too many requests'}`);
         }
         
         // For other errors, throw immediately
@@ -153,10 +194,11 @@ ${fullTurn}`;
       continue;
     }
   }
-  
+    
   // If we get here, all models failed
   console.error('All models failed. Last error:', lastError);
   throw lastError || new Error('All models failed');
+  });
 }
 
 async function handleFullExport(exportData) {
@@ -188,9 +230,9 @@ async function handleFullExport(exportData) {
         });
       }
       
-      // Small delay to avoid rate limiting
+      // Delay between turns to avoid rate limiting (increased from 300ms)
       if (i < turns.length - 1) {
-        await sleep(300);
+        await sleep(800);
       }
     }
     
@@ -460,8 +502,4 @@ function chunkText(text, maxLength) {
   }
   
   return chunks;
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }

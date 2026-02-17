@@ -215,23 +215,29 @@ async function checkConversationStatus() {
     currentConversationUrl = tab.url;
     
     // Extract conversation to get turn count
-    const response = await chrome.tabs.sendMessage(tab.id, { 
-      action: 'extractConversation' 
-    });
-    
-    if (response && response.success) {
-      currentTurnCount = response.data.length;
-      
-      // Get export history for this conversation
-      chrome.runtime.sendMessage({
-        action: 'getExportHistory',
-        conversationUrl: currentConversationUrl
-      }, (historyResponse) => {
-        if (historyResponse && historyResponse.success && historyResponse.data) {
-          exportHistory = historyResponse.data;
-          updateExportStatusUI();
-        }
+    try {
+      const response = await chrome.tabs.sendMessage(tab.id, { 
+        action: 'extractConversation' 
       });
+      
+      if (response && response.success) {
+        currentTurnCount = response.data.length;
+        
+        // Get export history for this conversation
+        chrome.runtime.sendMessage({
+          action: 'getExportHistory',
+          conversationUrl: currentConversationUrl
+        }, (historyResponse) => {
+          if (historyResponse && historyResponse.success && historyResponse.data) {
+            exportHistory = historyResponse.data;
+            updateExportStatusUI();
+          }
+        });
+      }
+    } catch (msgError) {
+      // Content script not available - this is normal if page hasn't loaded yet
+      console.log('Content script not ready:', msgError.message);
+      return;
     }
   } catch (error) {
     console.error('Error checking conversation status:', error);
@@ -377,12 +383,20 @@ async function handleExport(mode = 'full') {
     }
     
     // Extract conversation from page
-    const response = await chrome.tabs.sendMessage(tab.id, { 
-      action: 'extractConversation' 
-    });
+    let response;
+    try {
+      response = await chrome.tabs.sendMessage(tab.id, { 
+        action: 'extractConversation' 
+      });
+    } catch (msgError) {
+      if (msgError.message.includes('Could not establish connection')) {
+        throw new Error('Content script not loaded. Please refresh the Claude.ai page and try again.');
+      }
+      throw msgError;
+    }
     
-    if (!response.success) {
-      throw new Error(response.error || 'Failed to extract conversation');
+    if (!response || !response.success) {
+      throw new Error(response?.error || 'Failed to extract conversation');
     }
     
     const turns = response.data;

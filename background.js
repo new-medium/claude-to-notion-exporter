@@ -147,22 +147,50 @@ ${fullTurn}`;
       console.log(`Model ${model} response status:`, response.status);
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: { message: 'Unknown error' } }));
-        console.error(`Model ${model} error:`, errorData);
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorData = await response.json();
+          
+          // Extract error message from various possible structures
+          if (errorData.error) {
+            if (typeof errorData.error === 'string') {
+              errorMessage = errorData.error;
+            } else if (errorData.error.message) {
+              errorMessage = errorData.error.message;
+            } else if (errorData.error.type) {
+              errorMessage = `${errorData.error.type}: ${errorData.error.message || 'Unknown error'}`;
+            } else {
+              errorMessage = JSON.stringify(errorData.error);
+            }
+          } else if (errorData.message) {
+            errorMessage = errorData.message;
+          }
+          
+          // Only log detailed error for non-404 responses (404 is expected during model fallback)
+          if (response.status !== 404) {
+            console.error(`Model ${model} error response:`, JSON.stringify(errorData, null, 2));
+          }
+        } catch (e) {
+          // Failed to parse JSON error response
+          errorMessage = response.statusText || `HTTP ${response.status}`;
+        }
         
-        // If 404, try next model
+        // If 404, try next model (this is expected behavior)
         if (response.status === 404) {
+          console.log(`Model ${model} not available, trying next model...`);
           lastError = new Error(`Model not found: ${model}`);
           continue;
         }
         
+        console.error(`Model ${model} error: ${errorMessage}`);
+        
         // If rate limited, throw to trigger retry
         if (response.status === 429) {
-          throw new Error(`Rate limit (429): ${errorData.error?.message || 'Too many requests'}`);
+          throw new Error(`Rate limit (429): ${errorMessage}`);
         }
         
         // For other errors, throw immediately
-        throw new Error(`API Error (${response.status}): ${errorData.error?.message || response.statusText}`);
+        throw new Error(`API Error: ${errorMessage}`);
       }
 
       // Success! Parse and return
@@ -450,8 +478,15 @@ async function createNotionToggles(summaries, pageId, notionToken, chatTitle, co
   });
   
   if (!response2.ok) {
-    const errorData = await response2.json().catch(() => ({}));
-    throw new Error(`Notion API Error: ${errorData.message || response2.statusText}`);
+    let errorMessage = `HTTP ${response2.status}`;
+    try {
+      const errorData = await response2.json();
+      console.error('Notion API error response:', JSON.stringify(errorData, null, 2));
+      errorMessage = errorData.message || JSON.stringify(errorData);
+    } catch (e) {
+      errorMessage = response2.statusText || errorMessage;
+    }
+    throw new Error(`Notion API Error: ${errorMessage}`);
   }
   
   const masterChildren = await response2.json();

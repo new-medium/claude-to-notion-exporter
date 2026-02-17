@@ -1,0 +1,28 @@
+Assistant: {ASSISTANT_CONTENT}`,
+    isDefault: false,
+    isBuiltIn: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  },
+  {
+    id: 'built-in-learning',
+    name: 'Learning Points',
+    prompt: `You are extracting key learning points and insights from a conversation between a user and an AI assistant.
+
+Provide two summaries focusing on educational content:
+1. A one-sentence summary (max 150 characters) of the main learning or insight
+2. A one-paragraph summary (3-5 sentences) that includes:
+   - Key concepts or principles explained
+   - New knowledge or insights gained
+   - Important clarifications or corrections
+   - Interesting facts or discoveries
+   - Learning takeaways for the user
+
+Format your response as JSON:
+{
+  "oneLine": "...",
+  "paragraph": "..."
+}
+
+Conversation turn:
+User: {USER_CONTENT}

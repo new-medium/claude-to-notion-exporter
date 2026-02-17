@@ -1,0 +1,28 @@
+Assistant: {ASSISTANT_CONTENT}`,
+    isDefault: false,
+    isBuiltIn: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  },
+  {
+    id: 'built-in-action-items',
+    name: 'Action Items',
+    prompt: `You are extracting action items, decisions, and next steps from a conversation between a user and an AI assistant.
+
+Provide two summaries focusing on actionable content:
+1. A one-sentence summary (max 150 characters) of the main action or decision
+2. A one-paragraph summary (3-5 sentences) that includes:
+   - Specific tasks or action items mentioned
+   - Decisions that were made
+   - Next steps or follow-up actions
+   - Deadlines or timelines if mentioned
+   - Responsibilities or assignments
+
+Format your response as JSON:
+{
+  "oneLine": "...",
+  "paragraph": "..."
+}
+
+Conversation turn:
+User: {USER_CONTENT}
